@@ -1,82 +1,130 @@
-"""
-DreamArts 2027 新卒エンジニア採用コーディングテスト
-最長片道きっぷの旅（言語: Python 3）
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
-使い方:
-  cat input.txt | python solve.py
-
-仕様:
-- 入力: "u, v, w"（空白可）を1行1辺として複数行（終端まで）
-- 出力: 最長経路のノードIDを1行ずつ（CRLF）で標準出力
-注意:
-- 一度通ったノードは再訪不可（単純路の最長）
-- 有向グラフ想定。孤立頂点・非連結OK
 """
+使い方
+    Get-Content input.txt | python trainTest.py
+
+入力形式:
+    1 行につき 1 本の路線を表す。
+        u, v, w
+    u: 始点の駅 ID（整数）
+    v: 終点の駅 ID（整数）
+    w: 距離（浮動小数点数）
+    ※ カンマの前後には任意のスペースを許容する。
+
+出力:
+    最長経路を構成する駅 ID を、通過順に 1 行ずつ出力する。
+    行末の改行は CRLF (\r\n) とする。
+
+制約:
+    - 同じ駅を 2 回以上通る経路は無効（単純路のみを対象）。
+    - グラフは有向グラフとして扱う。
+    - 孤立頂点や非連結グラフも入力として許容する。
+"""
+
 import sys
-from typing import Dict, List, Tuple, Set
+from typing import Dict, List, Tuple, Set, TextIO
 
-def parse_edges() -> Tuple[Dict[int, List[Tuple[int, float]]], Set[int]]:
-    graph: Dict[int, List[Tuple[int, float]]] = {}
+
+Graph = Dict[int, List[Tuple[int, float]]]
+
+
+def parse_edges(stream: TextIO) -> Tuple[Graph, Set[int]]:
+
+    graph: Graph = {}
     nodes: Set[int] = set()
-    for raw in sys.stdin:
+
+    for raw in stream:
         line = raw.strip()
         if not line:
+            # 空行は無視
             continue
-        # 想定フォーマット: "u, v, w"（空白を許容）
+
         try:
-            s, e, d = [x.strip() for x in line.split(",")]
-            u, v, w = int(s), int(e), float(d)
+            # "u, v, w" をカンマで分割し、空白を取り除く
+            s, e, d = (part.strip() for part in line.split(","))
+            u = int(s)
+            v = int(e)
+            w = float(d)
         except Exception:
-            # 形式がおかしい行は無視（実務的防御）
+            # 形式が異なる行はスキップ（防御的プログラミング）
             continue
+
         graph.setdefault(u, []).append((v, w))
-        nodes.add(u); nodes.add(v)
-    # 出次数0でも探索開始点にするため、全ノードをgraphキーとして用意
+        nodes.add(u)
+        nodes.add(v)
+
+    # 出次数 0 の駅も探索開始点にできるよう、キーを補完しておく
     for n in nodes:
         graph.setdefault(n, [])
+
     return graph, nodes
 
-def longest_simple_path(graph: Dict[int, List[Tuple[int, float]]], nodes: Set[int]) -> List[int]:
-    best_path: List[int] = []
-    best_dist: float = -1.0
 
-    # 反復DFS（スタック）: (現在ノード, 次の辺の走査位置, 現在経路, 訪問集合, 現在距離)
-    for start in nodes:
-        stack: List[Tuple[int, int, List[int], Set[int], float]] = []
-        stack.append((start, 0, [start], {start}, 0.0))
+def dfs_longest_from(
+    start: int,
+    graph: Graph,
+) -> Tuple[float, List[int]]:
+    best_dist = 0.0
+    best_path: List[int] = [start]
 
-        while stack:
-            node, idx, path, visited, dist = stack.pop()
+    # (現在の駅, 現在までの距離, 現在の経路, 訪問済み駅集合)
+    stack: List[Tuple[int, float, List[int], Set[int]]] = [
+        (start, 0.0, [start], {start})
+    ]
 
-            # ベスト更新
-            if dist > best_dist:
-                best_dist, best_path = dist, path[:]
+    while stack:
+        node, dist, path, visited = stack.pop()
 
-            edges = graph.get(node, [])
-            # 次の分岐を順に探索
-            while idx < len(edges):
-                nxt, w = edges[idx]
-                idx += 1
-                if nxt in visited:
-                    continue
-                # 現在の状態を戻せるようにプッシュ（分岐継続用）
-                stack.append((node, idx, path[:], visited.copy(), dist))
-                # 次ノードへ
-                new_path = path + [nxt]
-                new_visited = visited | {nxt}
-                stack.append((nxt, 0, new_path, new_visited, dist + w))
-                break  # 直近の分岐を優先して深く潜る（手続き的DFS）
-            # すべての辺を試し終えたら自然にバックトラック
-    return best_path
+        # 現時点の経路が最長なら更新
+        if dist > best_dist:
+            best_dist = dist
+            best_path = path
+
+        # 次の駅へ進めるだけ進める
+        for nxt, w in graph.get(node, []):
+            if nxt in visited:
+                # 一度通った駅には戻らない
+                continue
+
+            new_dist = dist + w
+            new_path = path + [nxt]
+            new_visited = visited | {nxt}
+            stack.append((nxt, new_dist, new_path, new_visited))
+
+    return best_dist, best_path
+
+
+def solve_from_stream(stream: TextIO) -> List[int]:
+    
+    graph, nodes = parse_edges(stream)
+    if not nodes:
+        return []
+
+    overall_best_dist = -1.0
+    overall_best_path: List[int] = []
+
+    # すべての駅を出発点候補として最長経路を探索
+    for start in sorted(nodes):
+        dist, path = dfs_longest_from(start, graph)
+        if dist > overall_best_dist:
+            overall_best_dist = dist
+            overall_best_path = path
+
+    return overall_best_path
+
 
 def main() -> None:
-    graph, nodes = parse_edges()
-    if not nodes:
+    path = solve_from_stream(sys.stdin)
+
+    # 規定通り、駅 ID を 1 行ずつ CRLF で出力する
+    if not path:
         return
-    path = longest_simple_path(graph, nodes)
-    # 出力は CRLF（課題の記述に合わせる）
+
     out = "\r\n".join(str(x) for x in path) + "\r\n"
     sys.stdout.write(out)
+
 
 if __name__ == "__main__":
     main()
